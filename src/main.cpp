@@ -7,8 +7,8 @@
 #include <Adafruit_Sensor.h>
 #include "MAX30105.h"
 
-const char *ssid = "ZED_Saglik_Monitor";
-const char *password = "12345678";
+const char *ssid = "Ok-Sens-Stress";
+const char *password = "ok123456"; // 8 karakterli şifre
 
 WebServer server(80);
 Adafruit_ADS1115 ads;
@@ -36,7 +36,7 @@ float g_tempC = 0.0;
 float g_voltGSR = 0.0;
 float g_voltBat = 0.0;
 int g_batPct = 0;
-float g_accelMag = 9.8;
+float g_accX = 0.0, g_accY = 0.0, g_accZ = 0.0, g_accelMag = 1.0;
 String g_durumGenel = "CIHAZ BOSTA";
 
 bool adsActive = false;
@@ -46,87 +46,155 @@ bool maxActive = false;
 // Fonksiyon Prototipleri
 void processPPG(uint32_t irValue);
 
+// --- OK-SENS GÖRSEL ARAYÜZÜ ---
 const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ZED Sağlık Monitörü</title>
+  <title>Ok-Sens | Biyometrik Takip</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
-    .container { max-width: 600px; margin: 0 auto; }
-    h1 { font-size: 1.4rem; text-align: center; margin-bottom: 16px; color: #38bdf8; }
-    .status-badge { text-align: center; padding: 12px; font-weight: bold; border-radius: 8px; margin-bottom: 16px; font-size: 1.05rem; background: #334155; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-    .card { background: #1e293b; padding: 14px; border-radius: 8px; border: 1px solid #334155; }
-    .card-title { font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; }
-    .card-value { font-size: 1.6rem; font-weight: bold; margin-top: 6px; }
-    .btn { display: block; width: 100%; padding: 14px; background: #0284c7; color: white; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; }
-    .btn:active { background: #0369a1; }
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-bright: #ffffff;
+      --accent: #58a6ff;
+      --green: #2ea043;
+      --red: #f85149;
+      --orange: #d29922;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 16px; display: flex; flex-direction: column; align-items: center; }
+    .header { width: 100%; max-width: 760px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+    .brand { font-size: 1.4rem; font-weight: 700; color: var(--text-bright); display: flex; align-items: center; gap: 8px; }
+    .brand span { color: var(--accent); }
+    .battery-box { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.95rem; }
+    .grid { width: 100%; max-width: 760px; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; }
+    .card-title { font-size: 0.8rem; text-transform: uppercase; color: #8b949e; letter-spacing: 0.5px; }
+    .card-value { font-size: 1.6rem; font-weight: 700; color: var(--text-bright); margin: 6px 0; }
+    .card-sub { font-size: 0.75rem; color: #8b949e; }
+    .status-card { grid-column: 1 / -1; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; }
+    .status-text { font-size: 1.3rem; font-weight: 700; color: var(--accent); margin-top: 4px; }
+    .actions { width: 100%; max-width: 760px; display: flex; gap: 10px; }
+    button { flex: 1; padding: 12px; border-radius: 6px; border: 1px solid var(--border); font-weight: 600; cursor: pointer; transition: 0.2s; }
+    .btn-log { background: var(--green); color: #fff; border: none; }
+    .btn-export { background: var(--card-bg); color: var(--text-bright); }
+    .btn-export:hover { background: #21262d; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>ZED Sağlık Monitörü</h1>
-    <div id="status" class="status-badge">Bağlantı kuruluyor...</div>
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">Pil Durumu</div>
-        <div id="bat" class="card-value">-- %</div>
-      </div>
-      <div class="card">
-        <div class="card-title">Kalp Atışı</div>
-        <div id="bpm" class="card-value">-- BPM</div>
-      </div>
-      <div class="card">
-        <div class="card-title">Cilt Sıcaklığı</div>
-        <div id="temp" class="card-value">-- °C</div>
-      </div>
-      <div class="card">
-        <div class="card-title">GSR (İletkenlik)</div>
-        <div id="gsr" class="card-value">-- V</div>
-      </div>
-      <div class="card" style="grid-column: span 2;">
-        <div class="card-title">İvme Büyüklüğü</div>
-        <div id="accel" class="card-value">-- m/s²</div>
-      </div>
+  <div class="header">
+    <div class="brand">Ok-Sens <span>Stress Monitor</span></div>
+    <div class="battery-box" id="batBox">
+      <span id="batVolt">-- V</span>
+      <span id="batPct" style="color: var(--green);">--%</span>
     </div>
-    <button class="btn" onclick="downloadCSV()">Verileri CSV İndir</button>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Galvanik Direnç (GSR)</div>
+      <div class="card-value" id="gsrVal">--</div>
+      <div class="card-sub">Deri İletkenlik Voltajı</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Kalp Nabzı (BPM)</div>
+      <div class="card-value" id="bpmVal">--</div>
+      <div class="card-sub">MAX30102 PPG</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Yüzey Isısı</div>
+      <div class="card-value" id="tempVal">-- °C</div>
+      <div class="card-sub">NTC Termistör</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Dinamik İvme</div>
+      <div class="card-value" id="accVal">--</div>
+      <div class="card-sub" id="accAxes">X: -- | Y: -- | Z: --</div>
+    </div>
+    <div class="status-card">
+      <div class="card-title">Füzyon Analiz Durumu</div>
+      <div class="status-text" id="stressVal">Bağlanıyor...</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn-log" id="logBtn" onclick="toggleLog()">Kaydı Başlat</button>
+    <button class="btn-export" onclick="exportCSV()">CSV Dışa Aktar</button>
   </div>
 
   <script>
-    let logData = [["Zaman", "Durum", "Pil_Yuzde", "Pil_Volt", "BPM", "Sicaklik", "GSR_V", "Ivme"]];
+    let isLogging = false;
+    let logData = [];
+    let wakeLock = null;
 
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (err) {}
+    }
+    requestWakeLock();
+
+    // Veri güncelleme
     setInterval(() => {
       fetch('/veri')
         .then(r => r.json())
         .then(d => {
-          document.getElementById('status').innerText = d.durum;
-          document.getElementById('bat').innerText = "%" + d.bat_pct + " (" + d.bat_v.toFixed(2) + "V)";
-          document.getElementById('bpm').innerText = d.bpm > 0 ? Math.round(d.bpm) + " BPM" : "--";
-          document.getElementById('temp').innerText = d.temp.toFixed(1) + " °C";
-          document.getElementById('gsr').innerText = d.gsr.toFixed(3) + " V";
-          document.getElementById('accel').innerText = d.accel.toFixed(1) + " m/s²";
+          document.getElementById('batVolt').innerText = d.batV.toFixed(2) + " V";
+          document.getElementById('batPct').innerText = "%" + d.batPct;
+          document.getElementById('gsrVal').innerText = d.gsr.toFixed(2) + " V";
+          document.getElementById('bpmVal').innerText = d.bpm > 0 ? d.bpm : "--";
+          document.getElementById('tempVal').innerText = d.temp.toFixed(1) + " °C";
+          document.getElementById('accVal').innerText = d.accM.toFixed(2) + " g";
+          document.getElementById('accAxes').innerText = `X:${d.accX.toFixed(1)} Y:${d.accY.toFixed(1)} Z:${d.accZ.toFixed(1)}`;
+          document.getElementById('stressVal').innerText = d.status;
 
-          const st = document.getElementById('status');
-          if (d.durum.includes("STRES")) st.style.background = "#b91c1c";
-          else if (d.durum.includes("EFOR")) st.style.background = "#d97706";
-          else if (d.durum.includes("SAKIN")) st.style.background = "#15803d";
-          else st.style.background = "#334155";
+          const st = document.getElementById('stressVal');
+          if (d.status.includes("YUKSEK STRES")) st.style.color = "var(--red)";
+          else if (d.status.includes("EFOR")) st.style.color = "var(--orange)";
+          else if (d.status.includes("SAKIN")) st.style.color = "var(--green)";
+          else st.style.color = "var(--accent)";
 
-          const timeStr = new Date().toLocaleTimeString();
-          logData.push([timeStr, d.durum, d.bat_pct, d.bat_v.toFixed(2), d.bpm, d.temp, d.gsr, d.accel]);
-        })
-        .catch(() => {});
+          if (isLogging) {
+            logData.push({
+              time: new Date().toLocaleTimeString(),
+              gsr: d.gsr.toFixed(3),
+              bpm: d.bpm,
+              temp: d.temp.toFixed(2),
+              accMag: d.accM.toFixed(2),
+              stress: d.status,
+              batV: d.batV.toFixed(2)
+            });
+          }
+        }).catch(() => {});
     }, 500);
 
-    function downloadCSV() {
-      let csvContent = "data:text/csv;charset=utf-8," + logData.map(e => e.join(",")).join("\n");
-      let encodedUri = encodeURI(csvContent);
-      let link = document.createElement("a");
-      link.setAttribute("href", encodedUri);
-      link.setAttribute("download", "zed_saglik_log_" + Date.now() + ".csv");
+    function toggleLog() {
+      isLogging = !isLogging;
+      const b = document.getElementById('logBtn');
+      b.innerText = isLogging ? "Kaydı Durdur" : "Kaydı Başlat";
+      b.style.background = isLogging ? "var(--red)" : "var(--green)";
+    }
+
+    function exportCSV() {
+      if (logData.length === 0) {
+        alert("Henüz kaydedilmiş veri bulunmuyor!");
+        return;
+      }
+      let csv = "Zaman;GSR_V;BPM;Sicaklik_C;Ivme_g;Durum;Pil_V\n";
+      logData.forEach(r => {
+        csv += `${r.time};${r.gsr};${r.bpm};${r.temp};${r.accMag};${r.stress};${r.batV}\n`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.setAttribute("download", `Ok-Sens_Veri_${Date.now()}.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -141,10 +209,10 @@ void handleRoot() {
 }
 
 void handleVeri() {
-  char buf[192];
+  char buf[256];
   snprintf(buf, sizeof(buf), 
-           "{\"durum\":\"%s\",\"bat_pct\":%d,\"bat_v\":%.2f,\"bpm\":%.0f,\"temp\":%.1f,\"gsr\":%.3f,\"accel\":%.1f}", 
-           g_durumGenel.c_str(), g_batPct, g_voltBat, currentBPM, g_tempC, g_voltGSR, g_accelMag);
+           "{\"status\":\"%s\",\"batPct\":%d,\"batV\":%.2f,\"bpm\":%.0f,\"temp\":%.1f,\"gsr\":%.3f,\"accM\":%.2f,\"accX\":%.2f,\"accY\":%.2f,\"accZ\":%.2f}", 
+           g_durumGenel.c_str(), g_batPct, g_voltBat, currentBPM, g_tempC, g_voltGSR, g_accelMag, g_accX, g_accY, g_accZ);
   server.send(200, "application/json", buf);
 }
 
@@ -152,15 +220,15 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
 
-  Serial.println("\n--- ADIM 5: Tum Sensorler + Wi-Fi Entegrasyonu ---");
+  Serial.println("\n--- Ok-Sens Baslatiliyor ---");
 
-  // 1) Wi-Fi SoftAP
+  // 1) Wi-Fi SoftAP - 2 Baglanti siniri eklendi
   WiFi.persistent(false);
   WiFi.disconnect(true);
   delay(50);
   WiFi.mode(WIFI_AP);
 
-  WiFi.softAP(ssid, password, 1, 0, 4);
+  WiFi.softAP(ssid, password, 1, 0, 2); 
   WiFi.setSleep(false);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
@@ -180,7 +248,6 @@ void setup() {
   } else {
     ads.setGain(GAIN_ONE);
     adsActive = true;
-    Serial.println("[BASARILI] ADS1115 Hazir.");
   }
 
   // MPU6050
@@ -190,7 +257,6 @@ void setup() {
     mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
     mpuActive = true;
-    Serial.println("[BASARILI] MPU6050 Hazir.");
   }
 
   // MAX30102
@@ -201,7 +267,6 @@ void setup() {
     maxSensor.setPulseAmplitudeRed(0x1F);
     maxSensor.setPulseAmplitudeIR(0x1F);
     maxActive = true;
-    Serial.println("[BASARILI] MAX30102 Hazir.");
   }
 }
 
@@ -209,7 +274,7 @@ void loop() {
   server.handleClient();
 
   static unsigned long lastSample = 0;
-  if (millis() - lastSample >= 35) { // ~28 Hz ritim
+  if (millis() - lastSample >= 35) { 
     lastSample = millis();
 
     // 1. ADS1115 Okumaları
@@ -228,17 +293,20 @@ void loop() {
       g_voltGSR = ads.computeVolts(rawGSR);
 
       int16_t rawBat = ads.readADC_SingleEnded(2);
-      g_voltBat = ads.computeVolts(rawBat) * 2.0;
+      g_voltBat = ads.computeVolts(rawBat) * 2.0; // Y-Koprusu 2.0x Carpani (Guncel)
       g_batPct = constrain((int)((g_voltBat - 3.30) / (4.20 - 3.30) * 100.0), 0, 100);
     }
 
-    // 2. MPU6050 Okuması
+    // 2. MPU6050 Okuması (G degerine cevrildi)
     bool isMoving = false;
     if (mpuActive) {
       sensors_event_t a, g, temp;
       mpu.getEvent(&a, &g, &temp);
-      g_accelMag = sqrt(sq(a.acceleration.x) + sq(a.acceleration.y) + sq(a.acceleration.z));
-      isMoving = abs(g_accelMag - 9.81) > 2.0;
+      g_accX = a.acceleration.x / 9.81;
+      g_accY = a.acceleration.y / 9.81;
+      g_accZ = a.acceleration.z / 9.81;
+      g_accelMag = sqrt(sq(g_accX) + sq(g_accY) + sq(g_accZ));
+      isMoving = abs(g_accelMag - 1.0) > 0.15; // 1G referans sapmasi
     }
 
     // 3. MAX30102 Okuması & Nabız
@@ -263,9 +331,9 @@ void loop() {
       g_durumGenel = "FIZIKSEL EFOR";
     } else {
       if (currentBPM > 95.0 && g_voltGSR < 1.70) {
-        g_durumGenel = "YUKSEK STRES / UYARILMA";
+        g_durumGenel = "YUKSEK STRES";
       } else if (currentBPM > 90.0 || g_voltGSR < 1.75) {
-        g_durumGenel = "HAFIF STRES / ODAKLANMA";
+        g_durumGenel = "HAFIF STRES";
       } else {
         g_durumGenel = "SAKIN / DINLENIK";
       }
@@ -275,7 +343,7 @@ void loop() {
   static unsigned long lastLog = 0;
   if (millis() - lastLog >= 2000) {
     lastLog = millis();
-    Serial.printf("[%s] Pil: %%%d | BPM: %.0f | Isi: %.1f C | GSR: %.3f V | Ivme: %.1f\n", 
+    Serial.printf("[%s] Pil: %%%d | BPM: %.0f | Isi: %.1f C | GSR: %.3f V | Ivme: %.1f g\n", 
                   g_durumGenel.c_str(), g_batPct, currentBPM, g_tempC, g_voltGSR, g_accelMag);
   }
 
